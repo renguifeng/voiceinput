@@ -1,4 +1,5 @@
 import asyncio
+import ctypes
 import json
 import math
 import os
@@ -60,41 +61,51 @@ class VoiceInputEngine:
         self.server_url = "ws://localhost:10096"
         self.stream = None
         self.on_status_change = on_status_change or (lambda s: None)
-        self._clipboard = None  # lazy init
 
     def _audio_callback(self, indata, frames, time_info, status):
         if self.recording:
             with self.lock:
                 self.audio_buffer.append(indata[:, 0].copy())
 
-    def _get_clipboard(self):
-        """Lazy init tkinter clipboard helper (runs in main thread via after)."""
-        if self._clipboard is None:
-            import tkinter as tk
-            self._clipboard = tk.Tk()
-            self._clipboard.withdraw()
-        return self._clipboard
+    def _set_clipboard_win32(self, text):
+        """Thread-safe clipboard set via Win32 API (no Tk needed)."""
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
 
-    def _backspace(self, count):
-        for _ in range(count):
-            self._kb.tap(keyboard.Key.backspace)
+        # Set correct types for 64-bit Windows
+        kernel32.GlobalAlloc.restype = ctypes.c_void_p
+        kernel32.GlobalAlloc.argtypes = [ctypes.c_uint, ctypes.c_size_t]
+        kernel32.GlobalLock.restype = ctypes.c_void_p
+        kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
+        kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+        user32.OpenClipboard.restype = ctypes.c_int
+        user32.OpenClipboard.argtypes = [ctypes.c_void_p]
+        user32.SetClipboardData.restype = ctypes.c_void_p
+        user32.SetClipboardData.argtypes = [ctypes.c_uint, ctypes.c_void_p]
+
+        CF_UNICODETEXT = 13
+        GMEM_MOVEABLE = 0x0002
+
+        data = text.encode("utf-16-le") + b"\x00\x00"
+        h = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(data))
+        p = kernel32.GlobalLock(h)
+        ctypes.memmove(p, data, len(data))
+        kernel32.GlobalUnlock(h)
+
+        user32.OpenClipboard(0)
+        user32.EmptyClipboard()
+        user32.SetClipboardData(CF_UNICODETEXT, h)
+        user32.CloseClipboard()
 
     def _paste_text(self, text):
         """Type text via clipboard paste — fast and reliable for Chinese."""
         if not text:
             return
-        import tkinter as tk
-        root = tk.Tk()
-        root.withdraw()
-        root.clipboard_clear()
-        root.clipboard_append(text)
-        root.update()
-        # Ctrl+V
+        self._set_clipboard_win32(text)
         self._kb.press(keyboard.Key.ctrl)
         self._kb.press("v")
         self._kb.release("v")
         self._kb.release(keyboard.Key.ctrl)
-        root.destroy()
 
     # ── Continuous mode: real-time streaming ──────────────
 
@@ -109,7 +120,6 @@ class VoiceInputEngine:
         await ws.send(json.dumps({"is_speaking": False}))
 
     async def _stream_receiver(self, ws):
-        online_buf = ""
         try:
             async for msg in ws:
                 data = json.loads(msg)
@@ -118,15 +128,7 @@ class VoiceInputEngine:
                 if not text:
                     continue
                 if mode in ("2pass-offline", "offline"):
-                    # Backspace all online text typed for this segment
-                    self._backspace(len(online_buf))
-                    # Paste the accurate offline result
                     self._paste_text(text)
-                    online_buf = ""
-                else:
-                    # Online delta: paste incremental text
-                    self._paste_text(text)
-                    online_buf += text
         except websockets.ConnectionClosed:
             pass
 
