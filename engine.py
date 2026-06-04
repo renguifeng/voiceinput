@@ -2,6 +2,7 @@ import asyncio
 import ctypes
 import json
 import threading
+import time
 
 import numpy as np
 import sounddevice as sd
@@ -57,6 +58,14 @@ class VoiceInputEngine:
         _user32.SetClipboardData(CF_UNICODETEXT, h)
         _user32.CloseClipboard()
 
+    def _undo(self, count):
+        """Send Ctrl+Z repeatedly to undo past paste operations."""
+        for _ in range(count):
+            self._kb.press(keyboard.Key.ctrl)
+            self._kb.tap("z")
+            self._kb.release(keyboard.Key.ctrl)
+            time.sleep(0.02)
+
     def _paste_text(self, text):
         if not text:
             return
@@ -65,6 +74,7 @@ class VoiceInputEngine:
         self._kb.press("v")
         self._kb.release("v")
         self._kb.release(keyboard.Key.ctrl)
+        time.sleep(0.03)  # wait for target app to process the paste
 
     # ── Continuous mode: real-time streaming ──────────────
 
@@ -79,6 +89,7 @@ class VoiceInputEngine:
         await ws.send(json.dumps({"is_speaking": False}))
 
     async def _stream_receiver(self, ws):
+        paste_count = 0  # number of online pastes to undo
         try:
             async for msg in ws:
                 data = json.loads(msg)
@@ -87,7 +98,15 @@ class VoiceInputEngine:
                 if not text:
                     continue
                 if mode in ("2pass-offline", "offline"):
+                    # Undo all online pastes, then paste final result
+                    if paste_count:
+                        self._undo(paste_count)
+                        time.sleep(0.05)
                     self._paste_text(text)
+                    paste_count = 0
+                else:
+                    self._paste_text(text)
+                    paste_count += 1
         except websockets.ConnectionClosed:
             pass
 

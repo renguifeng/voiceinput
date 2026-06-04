@@ -15,7 +15,9 @@ from widget import FloatingWidget
 
 class VoiceInputApp:
     def __init__(self):
-        self.engine = VoiceInputEngine(on_status_change=self._on_engine_status)
+        self.engine = VoiceInputEngine(
+            on_status_change=self._on_engine_status,
+        )
         self.settings = self._load_settings()
         self.listener = None
         self.tray = None
