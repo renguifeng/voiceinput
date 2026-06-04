@@ -86,16 +86,7 @@ class VoiceInputEngine:
             await asyncio.sleep(SEND_INTERVAL)
         await ws.send(json.dumps({"is_speaking": False}))
 
-    @staticmethod
-    def _common_prefix_len(a, b):
-        n = min(len(a), len(b))
-        for i in range(n):
-            if a[i] != b[i]:
-                return i
-        return n
-
     async def _stream_receiver(self, ws):
-        online_buf = ""
         try:
             async for msg in ws:
                 data = json.loads(msg)
@@ -104,16 +95,7 @@ class VoiceInputEngine:
                 if not text:
                     continue
                 if mode in ("2pass-offline", "offline"):
-                    # Replace online buffer with accurate offline text
-                    # Only backspace the differing part (common prefix is kept)
-                    common = self._common_prefix_len(online_buf, text)
-                    self._backspace(len(online_buf) - common)
-                    self._type_text(text[common:])
-                    online_buf = ""
-                else:
-                    # Online partial: type new text, track in buffer
                     self._type_text(text)
-                    online_buf += text
         except websockets.ConnectionClosed:
             pass
 
