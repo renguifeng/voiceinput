@@ -15,7 +15,15 @@ from tkinter import ttk
 import pystray
 from PIL import Image, ImageDraw
 
-SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
+import sys
+
+# Resolve app directory: next to exe when frozen, script dir otherwise
+if getattr(sys, 'frozen', False):
+    APP_DIR = os.path.dirname(sys.executable)
+else:
+    APP_DIR = os.path.dirname(os.path.abspath(__file__))
+
+SETTINGS_FILE = os.path.join(APP_DIR, "settings.json")
 SAMPLE_RATE = 16000
 SEND_INTERVAL = 0.16
 
