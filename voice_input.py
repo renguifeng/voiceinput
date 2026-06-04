@@ -152,84 +152,15 @@ class VoiceInputEngine:
         else:
             self.start_continuous()
 
-    # ── PTT mode: stream audio while held, type result on release ──
+    # ── PTT mode: press to start real-time, release to stop ──
 
     def start_ptt_recording(self):
-        if self.recording:
-            return
-        self.recording = True
-        self.audio_buffer.clear()
-        self._stop_event.clear()
-        self.on_status_change("recording")
-
-        self.stream = sd.InputStream(
-            samplerate=SAMPLE_RATE, channels=1, dtype="int16",
-            blocksize=int(SAMPLE_RATE * SEND_INTERVAL),
-            callback=self._audio_callback,
-        )
-        self.stream.start()
-        threading.Thread(target=lambda: asyncio.run(self._ptt_stream()), daemon=True).start()
+        # reuse continuous mode engine
+        self.start_continuous()
 
     def stop_ptt_and_recognize(self):
-        if not self.recording:
-            return
-        self.recording = False
-        self._stop_event.set()
-        # sender will send is_speaking=False, receiver will type final result
-
-    async def _ptt_sender(self, ws):
-        while not self._stop_event.is_set():
-            with self.lock:
-                chunks = list(self.audio_buffer)
-                self.audio_buffer.clear()
-            if chunks:
-                await ws.send(np.concatenate(chunks).tobytes())
-            await asyncio.sleep(SEND_INTERVAL)
-        # flush remaining audio
-        with self.lock:
-            chunks = list(self.audio_buffer)
-            self.audio_buffer.clear()
-        if chunks:
-            await ws.send(np.concatenate(chunks).tobytes())
-        await ws.send(json.dumps({"is_speaking": False}))
-
-    async def _ptt_receiver(self, ws):
-        final_text = ""
-        try:
-            async for msg in ws:
-                data = json.loads(msg)
-                text = data.get("text", "")
-                mode = data.get("mode", "")
-                if not text:
-                    continue
-                if mode in ("2pass-offline", "offline"):
-                    final_text = text
-        except websockets.ConnectionClosed:
-            pass
-        # type only the final accurate result
-        if final_text:
-            self._type_text(final_text)
-
-    async def _ptt_stream(self):
-        try:
-            async with websockets.connect(self.server_url) as ws:
-                await ws.send(json.dumps({
-                    "mode": "2pass",
-                    "chunk_size": [5, 10, 5],
-                    "chunk_interval": 10,
-                    "wav_name": "microphone",
-                    "is_speaking": True,
-                    "audio_fs": SAMPLE_RATE,
-                }))
-                await asyncio.gather(self._ptt_sender(ws), self._ptt_receiver(ws))
-        except Exception as e:
-            print(f"PTT error: {e}")
-        finally:
-            self.on_status_change("idle")
-            if self.stream:
-                self.stream.stop()
-                self.stream.close()
-                self.stream = None
+        # reuse continuous mode engine
+        self.stop_continuous()
 
 
 class FloatingWidget:
