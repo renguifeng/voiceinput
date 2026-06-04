@@ -60,19 +60,41 @@ class VoiceInputEngine:
         self.server_url = "ws://localhost:10096"
         self.stream = None
         self.on_status_change = on_status_change or (lambda s: None)
+        self._clipboard = None  # lazy init
 
     def _audio_callback(self, indata, frames, time_info, status):
         if self.recording:
             with self.lock:
                 self.audio_buffer.append(indata[:, 0].copy())
 
+    def _get_clipboard(self):
+        """Lazy init tkinter clipboard helper (runs in main thread via after)."""
+        if self._clipboard is None:
+            import tkinter as tk
+            self._clipboard = tk.Tk()
+            self._clipboard.withdraw()
+        return self._clipboard
+
     def _backspace(self, count):
         for _ in range(count):
             self._kb.tap(keyboard.Key.backspace)
 
-    def _type_text(self, text):
-        for char in text:
-            self._kb.type(char)
+    def _paste_text(self, text):
+        """Type text via clipboard paste — fast and reliable for Chinese."""
+        if not text:
+            return
+        import tkinter as tk
+        root = tk.Tk()
+        root.withdraw()
+        root.clipboard_clear()
+        root.clipboard_append(text)
+        root.update()
+        # Ctrl+V
+        self._kb.press(keyboard.Key.ctrl)
+        self._kb.press("v")
+        self._kb.release("v")
+        self._kb.release(keyboard.Key.ctrl)
+        root.destroy()
 
     # ── Continuous mode: real-time streaming ──────────────
 
@@ -87,6 +109,7 @@ class VoiceInputEngine:
         await ws.send(json.dumps({"is_speaking": False}))
 
     async def _stream_receiver(self, ws):
+        online_buf = ""
         try:
             async for msg in ws:
                 data = json.loads(msg)
@@ -95,7 +118,15 @@ class VoiceInputEngine:
                 if not text:
                     continue
                 if mode in ("2pass-offline", "offline"):
-                    self._type_text(text)
+                    # Backspace all online text typed for this segment
+                    self._backspace(len(online_buf))
+                    # Paste the accurate offline result
+                    self._paste_text(text)
+                    online_buf = ""
+                else:
+                    # Online delta: paste incremental text
+                    self._paste_text(text)
+                    online_buf += text
         except websockets.ConnectionClosed:
             pass
 
