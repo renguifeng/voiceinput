@@ -15,10 +15,11 @@ from widget import FloatingWidget
 
 class VoiceInputApp:
     def __init__(self):
+        self.settings = self._load_settings()
         self.engine = VoiceInputEngine(
             on_status_change=self._on_engine_status,
+            paste_delay=self.settings["paste_delay"] / 1000.0,
         )
-        self.settings = self._load_settings()
         self.listener = None
         self.tray = None
         self._build_gui()
@@ -31,6 +32,7 @@ class VoiceInputApp:
             "server_url": "ws://localhost:10096",
             "hotkey": "ctrl_r",
             "mode": "continuous",
+            "paste_delay": 20,
         }
         try:
             with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
@@ -57,7 +59,7 @@ class VoiceInputApp:
         # Server
         ttk.Label(main, text="服务器地址:").grid(row=0, column=0, sticky=tk.W, pady=4)
         self.server_var = tk.StringVar()
-        ttk.Entry(main, textvariable=self.server_var, width=32).grid(
+        ttk.Entry(main, textvariable=self.server_var, width=42).grid(
             row=0, column=1, columnspan=2, sticky=tk.EW, pady=4)
 
         # Hotkey
@@ -67,6 +69,13 @@ class VoiceInputApp:
                      values=list(HOTKEY_OPTIONS.keys()),
                      state="readonly", width=14).grid(
             row=1, column=1, sticky=tk.W, pady=4)
+
+        # Paste delay
+        ttk.Label(main, text="粘贴延时(ms):").grid(row=1, column=1, sticky=tk.E, pady=4, padx=(80, 0))
+        self.delay_var = tk.IntVar()
+        ttk.Spinbox(main, from_=0, to=200, increment=5,
+                    textvariable=self.delay_var, width=5).grid(
+            row=1, column=2, sticky=tk.W, pady=4)
 
         # Mode
         ttk.Label(main, text="录入模式:").grid(row=2, column=0, sticky=tk.W, pady=4)
@@ -103,7 +112,7 @@ class VoiceInputApp:
         # Description
         ttk.Separator(main, orient=tk.HORIZONTAL).grid(
             row=6, column=0, columnspan=3, sticky=tk.EW, pady=8)
-        self.desc_label = ttk.Label(main, text="", wraplength=320, foreground="gray")
+        self.desc_label = ttk.Label(main, text="", wraplength=420, foreground="gray")
         self.desc_label.grid(row=7, column=0, columnspan=3, sticky=tk.W)
 
     def _apply_settings_to_gui(self):
@@ -113,6 +122,7 @@ class VoiceInputApp:
                 self.hotkey_var.set(name)
                 break
         self.mode_var.set(self.settings["mode"])
+        self.delay_var.set(self.settings["paste_delay"])
         self.engine.server_url = self.settings["server_url"]
         self._update_desc()
 
@@ -150,7 +160,9 @@ class VoiceInputApp:
         self.settings["server_url"] = self.server_var.get()
         self.settings["hotkey"] = HOTKEY_OPTIONS.get(self.hotkey_var.get(), "scroll_lock")
         self.settings["mode"] = self.mode_var.get()
+        self.settings["paste_delay"] = self.delay_var.get()
         self.engine.server_url = self.settings["server_url"]
+        self.engine._paste_delay = self.settings["paste_delay"] / 1000.0
         self._save_settings()
         self._start_listener()
         self._update_desc()

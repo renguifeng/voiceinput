@@ -27,7 +27,7 @@ _user32.SetClipboardData.argtypes = [ctypes.c_uint, ctypes.c_void_p]
 
 
 class VoiceInputEngine:
-    def __init__(self, on_status_change=None):
+    def __init__(self, on_status_change=None, paste_delay=0.02):
         self.recording = False
         self.audio_buffer = []
         self.lock = threading.Lock()
@@ -36,6 +36,7 @@ class VoiceInputEngine:
         self.server_url = "ws://localhost:10096"
         self.stream = None
         self.on_status_change = on_status_change or (lambda s: None)
+        self._paste_delay = paste_delay  # seconds
 
     def _audio_callback(self, indata, frames, time_info, status):
         if self.recording:
@@ -59,12 +60,13 @@ class VoiceInputEngine:
         _user32.CloseClipboard()
 
     def _undo(self, count):
-        """Send Ctrl+Z repeatedly to undo past paste operations."""
+        """Send Ctrl+Z rapidly to undo past paste operations."""
         for _ in range(count):
             self._kb.press(keyboard.Key.ctrl)
             self._kb.tap("z")
             self._kb.release(keyboard.Key.ctrl)
-            time.sleep(0.02)
+        if count:
+            time.sleep(self._paste_delay)
 
     def _paste_text(self, text):
         if not text:
@@ -74,7 +76,7 @@ class VoiceInputEngine:
         self._kb.press("v")
         self._kb.release("v")
         self._kb.release(keyboard.Key.ctrl)
-        time.sleep(0.03)  # wait for target app to process the paste
+        time.sleep(self._paste_delay)  # wait for target app to process the paste
 
     # ── Continuous mode: real-time streaming ──────────────
 
@@ -99,9 +101,7 @@ class VoiceInputEngine:
                     continue
                 if mode in ("2pass-offline", "offline"):
                     # Undo all online pastes, then paste final result
-                    if paste_count:
-                        self._undo(paste_count)
-                        time.sleep(0.05)
+                    self._undo(paste_count)
                     self._paste_text(text)
                     paste_count = 0
                 else:
