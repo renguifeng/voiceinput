@@ -87,7 +87,6 @@ class VoiceInputEngine:
         await ws.send(json.dumps({"is_speaking": False}))
 
     async def _stream_receiver(self, ws):
-        online_typed = 0
         try:
             async for msg in ws:
                 data = json.loads(msg)
@@ -95,13 +94,10 @@ class VoiceInputEngine:
                 mode = data.get("mode", "")
                 if not text:
                     continue
+                # Only type offline results — they are accurate and per-segment
+                # Skip online partials to avoid backspace issues on long recordings
                 if mode in ("2pass-offline", "offline"):
-                    self._backspace(online_typed)
                     self._type_text(text)
-                    online_typed = 0
-                else:
-                    self._type_text(text)
-                    online_typed += len(text)
         except websockets.ConnectionClosed:
             pass
 
