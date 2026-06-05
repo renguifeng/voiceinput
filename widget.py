@@ -1,7 +1,6 @@
 import ctypes
 import ctypes.wintypes as wintypes
-import math
-import struct
+import time
 
 import tkinter as tk
 
@@ -122,16 +121,24 @@ def _get_caret_screen_pos():
 
 
 class FloatingWidget:
-    """Sci-fi style semi-transparent floating status widget."""
+    """Floating recording card with mic button, timer and pulse animation."""
 
-    BG = "#0D1117"
     TRANSPARENT = "#010101"
+    CARD_BG = "#FFFFFF"
+    CARD_W = 210
+    CARD_H = 76
+    CARD_R = 14
 
-    RING_COLORS = {
-        "idle":        ("#00E5A0", "#004D36"),
-        "recording":   ("#FF3B5C", "#4D0015"),
-        "recognizing": ("#FFB800", "#4D3800"),
-        "error":       ("#FF3B5C", "#4D0015"),
+    STATE_COLORS = {
+        "idle":        "#67C23A",
+        "recording":   "#F56C6C",
+        "recognizing": "#E6A23C",
+        "error":       "#F56C6C",
+    }
+    STATUS_TEXT = {
+        "idle": "就绪",
+        "recording": "录音中...",
+        "recognizing": "识别中...",
     }
 
     def __init__(self, parent, on_double_click=None):
@@ -141,25 +148,22 @@ class FloatingWidget:
         self._state = "idle"
         self._mode = "continuous"
         self._anim_id = None
-        self._pulse_phase = 0
-        self._glow_phase = 0.0
+        self._pulse_phase = 0.0
+        self._rec_start = None
+        self._error_text = ""
 
         self.win = tk.Toplevel(parent)
         self.win.overrideredirect(True)
         self.win.attributes("-topmost", True)
-        self.win.attributes("-alpha", 0.88)
+        self.win.attributes("-alpha", 0.95)
         self.win.configure(bg=self.TRANSPARENT)
         self.win.wm_attributes("-transparentcolor", self.TRANSPARENT)
 
-        W = 80
-        H = 80
-        self._size = W
-        self.canvas = tk.Canvas(self.win, width=W, height=H,
+        self.canvas = tk.Canvas(self.win, width=self.CARD_W, height=self.CARD_H,
                                 bg=self.TRANSPARENT, highlightthickness=0)
-        self.canvas.pack(padx=0, pady=0)
+        self.canvas.pack()
 
         self._draw()
-        self._start_anim()
 
         for w in (self.canvas, self.win):
             w.bind("<ButtonPress-1>", self._on_drag_start)
@@ -167,109 +171,117 @@ class FloatingWidget:
         self.canvas.bind("<Double-Button-1>", lambda e: self.on_double_click and self.on_double_click())
 
         self.win.update_idletasks()
-        sw, sh = self.win.winfo_screenwidth(), self.win.winfo_screenheight()
-        self.win.geometry(f"+{sw - W - 30}+{sh - H - 80}")
-
-    def _accent(self):
-        return self.RING_COLORS[self._state][0]
-
-    def _dim(self):
-        return self.RING_COLORS[self._state][1]
+        sw = self.win.winfo_screenwidth()
+        sh = self.win.winfo_screenheight()
+        self.win.geometry(f"+{sw - self.CARD_W - 30}+{sh - self.CARD_H - 80}")
 
     @staticmethod
-    def _lerp_color(c1, c2, t):
-        r1, g1, b1 = int(c1[1:3], 16), int(c1[3:5], 16), int(c1[5:7], 16)
-        r2, g2, b2 = int(c2[1:3], 16), int(c2[3:5], 16), int(c2[5:7], 16)
-        r = int(r1 + (r2 - r1) * t)
-        g = int(g1 + (g2 - g1) * t)
-        b = int(b1 + (b2 - b1) * t)
-        return f"#{r:02x}{g:02x}{b:02x}"
+    def _round_rect_pts(x1, y1, x2, y2, r):
+        return [
+            x1+r, y1, x2-r, y1, x2, y1, x2, y1+r,
+            x2, y2-r, x2, y2, x2-r, y2, x1+r, y2,
+            x1, y2, x1, y2-r, x1, y1+r, x1, y1,
+        ]
+
+    @staticmethod
+    def _blend(fg, bg, t):
+        r1, g1, b1 = int(fg[1:3], 16), int(fg[3:5], 16), int(fg[5:7], 16)
+        r2, g2, b2 = int(bg[1:3], 16), int(bg[3:5], 16), int(bg[5:7], 16)
+        return f"#{int(r1+(r2-r1)*t):02x}{int(g1+(g2-g1)*t):02x}{int(b1+(b2-b1)*t):02x}"
+
+    def _timer_str(self):
+        if self._rec_start is None:
+            return "00:00"
+        e = int(time.time() - self._rec_start)
+        return f"{e//60:02d}:{e%60:02d}"
 
     def _draw(self):
         c = self.canvas
         c.delete("all")
-        W = self._size
-        cx = W // 2
-        cy = W // 2
-        color = self._accent()
-        dim = self._dim()
+        W, H = self.CARD_W, self.CARD_H
+        color = self.STATE_COLORS[self._state]
 
-        c.create_oval(cx - 40, cy - 40, cx + 40, cy + 40,
-                      fill=self.BG, outline="")
+        # Shadow
+        c.create_polygon(self._round_rect_pts(2, 3, W+1, H+2, self.CARD_R),
+                         smooth=True, fill="#E8E8E8", outline="")
+        # Card body
+        c.create_polygon(self._round_rect_pts(0, 0, W-1, H-1, self.CARD_R),
+                         smooth=True, fill=self.CARD_BG, outline="#EBEBEB", width=1)
 
-        num_rings = 5
-        for i in range(num_rings):
-            phase = (self._glow_phase + i / num_rings) % 1.0
-            r = 26 + phase * 14
-            fade = 1.0 - phase
-            brightness = fade * 0.8
-            if self._state == "idle":
-                brightness *= 0.5
-            ring_color = self._lerp_color(self.BG, color, brightness)
-            c.create_oval(cx - r, cy - r, cx + r, cy + r,
-                          fill="", outline=ring_color, width=1.5)
+        mx, my, mr = 42, H // 2, 22
 
-        for r, w in [(38, 1), (35, 1), (32, 1)]:
-            c.create_oval(cx - r, cy - r, cx + r, cy + r,
-                          fill="", outline=dim, width=w)
+        # Pulse rings
+        if self._state == "recording":
+            for i in range(3):
+                p = (self._pulse_phase + i / 3) % 1.0
+                r = mr + p * 12
+                c.create_oval(mx-r, my-r, mx+r, my+r,
+                              fill="", outline=self._blend(color, self.CARD_BG, p), width=2)
 
-        for deg in range(0, 360, 30):
-            rad = math.radians(deg + self._pulse_phase)
-            r = 35
-            x = cx + r * math.cos(rad)
-            y = cy + r * math.sin(rad)
-            dot_r = 1.5 if deg % 60 == 0 else 1
-            c.create_oval(x - dot_r, y - dot_r, x + dot_r, y + dot_r,
-                          fill=dim, outline="")
+        fill = color if self._state == "recording" else "#F5F7FA"
+        icon = "#FFFFFF" if self._state == "recording" else color
 
-        c.create_oval(cx - 26, cy - 26, cx + 26, cy + 26,
-                      fill="", outline=color, width=2)
+        c.create_oval(mx-mr, my-mr, mx+mr, my+mr, fill=fill, outline=color, width=2)
 
-        c.create_oval(cx - 22, cy - 22, cx + 22, cy + 22,
-                      fill="", outline=dim, width=1)
+        # Mic icon
+        c.create_oval(mx-5, my-9, mx+5, my+1, fill=icon, outline="")
+        c.create_arc(mx-9, my-4, mx+9, my+9, start=0, extent=-180,
+                     style=tk.ARC, outline=icon, width=2)
+        c.create_line(mx, my+4, mx, my+9, fill=icon, width=2)
+        c.create_line(mx-4, my+9, mx+4, my+9, fill=icon, width=2)
 
-        mode_label = "HOLD" if self._mode == "ptt" else "LIVE"
-        c.create_text(cx, cy, text=mode_label, fill=color,
-                      font=("Consolas", 12, "bold"))
+        # Timer
+        c.create_text(mx+mr+14, H//2-10, text=self._timer_str(),
+                      font=("Consolas", 20, "bold"), fill="#303133", anchor=tk.W)
 
-        c.create_oval(cx - 3, cy - 34, cx + 3, cy - 28,
-                      fill=color, outline="")
+        # Status
+        if self._state == "error":
+            st, sc = self._error_text or "错误", color
+        else:
+            st = self.STATUS_TEXT.get(self._state, "就绪")
+            sc = color if self._state != "idle" else "#909399"
+        c.create_text(mx+mr+14, H//2+14, text=st,
+                      font=("Microsoft YaHei", 10), fill=sc, anchor=tk.W)
 
     def update(self, status, mode):
         self._mode = mode
         if status == "recording":
             self._state = "recording"
+            self._rec_start = time.time()
+            self._start_anim()
         elif status == "识别中...":
             self._state = "recognizing"
+            self._rec_start = None
+            self._stop_anim()
+            self._draw()
         elif status == "idle":
             self._state = "idle"
+            self._rec_start = None
+            self._error_text = ""
+            self._stop_anim()
+            self._draw()
         else:
             self._state = "error"
-
-        self._draw()
-        self._start_anim()
+            self._error_text = status
+            self._rec_start = None
+            self._stop_anim()
+            self._draw()
 
     def _start_anim(self):
+        self._stop_anim()
+        self._animate()
+
+    def _stop_anim(self):
         if self._anim_id:
             self.win.after_cancel(self._anim_id)
             self._anim_id = None
-        self._animate()
 
     def _animate(self):
-        if self._state == "recording":
-            self._pulse_phase = (self._pulse_phase + 6) % 360
-            self._glow_phase = (self._glow_phase + 0.06) % 1.0
-            self._draw()
-            self._anim_id = self.win.after(50, self._animate)
-        elif self._state == "recognizing":
-            self._pulse_phase = (self._pulse_phase + 3) % 360
-            self._glow_phase = (self._glow_phase + 0.025) % 1.0
-            self._draw()
-            self._anim_id = self.win.after(60, self._animate)
-        else:
-            self._glow_phase = (self._glow_phase + 0.012) % 1.0
-            self._draw()
-            self._anim_id = self.win.after(80, self._animate)
+        if self._state != "recording":
+            return
+        self._pulse_phase = (self._pulse_phase + 0.04) % 1.0
+        self._draw()
+        self._anim_id = self.win.after(80, self._animate)
 
     def _on_drag_start(self, e):
         self._drag_x = e.x
@@ -287,8 +299,7 @@ class FloatingWidget:
         self.win.withdraw()
 
     def destroy(self):
-        if self._anim_id:
-            self.win.after_cancel(self._anim_id)
+        self._stop_anim()
         self.win.destroy()
 
 
