@@ -292,6 +292,54 @@ class FloatingWidget:
         self.win.destroy()
 
 
+class SubtitleBar:
+    """Movie-style subtitle bar for intermediate recognition text.
+
+    Sits at the bottom-center of the screen with a semi-transparent
+    dark strip and large white text.
+    """
+
+    BG = "#000000"
+    TRANSPARENT = "#010101"
+
+    def __init__(self, parent):
+        self.win = tk.Toplevel(parent)
+        self.win.overrideredirect(True)
+        self.win.attributes("-topmost", True)
+        self.win.attributes("-alpha", 0.78)
+        self.win.configure(bg=self.TRANSPARENT)
+        self.win.wm_attributes("-transparentcolor", self.TRANSPARENT)
+        self.win.withdraw()
+
+        self._label = tk.Label(
+            self.win, text="", font=("Microsoft YaHei", 22),
+            fg="#FFFFFF", bg=self.BG, wraplength=900,
+            justify=tk.CENTER, padx=24, pady=10,
+        )
+        self._label.pack()
+
+    def show(self, text):
+        if not text:
+            self.win.withdraw()
+            return
+        self._label.config(text=text)
+        self.win.update_idletasks()
+        w = self.win.winfo_reqwidth()
+        h = self.win.winfo_reqheight()
+        sw = self.win.winfo_screenwidth()
+        sh = self.win.winfo_screenheight()
+        x = (sw - w) // 2
+        y = sh - h - 60
+        self.win.geometry(f"+{x}+{y}")
+        self.win.deiconify()
+
+    def hide(self):
+        self.win.withdraw()
+
+    def destroy(self):
+        self.win.destroy()
+
+
 class PreviewBubble:
     """Sogou-style candidate preview that follows the text caret.
 

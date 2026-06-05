@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw
 
 from constants import HOTKEY_OPTIONS, KEY_MAP, SETTINGS_FILE
 from engine import VoiceInputEngine
-from widget import FloatingWidget
+from widget import FloatingWidget, SubtitleBar
 
 
 class VoiceInputApp:
@@ -18,6 +18,7 @@ class VoiceInputApp:
         self.settings = self._load_settings()
         self.engine = VoiceInputEngine(
             on_status_change=self._on_engine_status,
+            on_partial_text=self._on_partial_text,
             paste_delay=self.settings["paste_delay"] / 1000.0,
         )
         self.listener = None
@@ -25,6 +26,7 @@ class VoiceInputApp:
         self._build_gui()
         self._apply_settings_to_gui()
         self.floating = FloatingWidget(self.root, on_double_click=self._show_window)
+        self.subtitle = SubtitleBar(self.root)
         self._start_listener()
 
     def _load_settings(self):
@@ -140,6 +142,12 @@ class VoiceInputApp:
         except Exception:
             pass
 
+    def _on_partial_text(self, text):
+        try:
+            self.root.after(0, lambda: self.subtitle.show(text))
+        except Exception:
+            pass
+
     def _update_status_ui(self, status):
         mode = self.settings.get("mode", "continuous")
         if status == "recording":
@@ -151,6 +159,7 @@ class VoiceInputApp:
         elif status == "idle":
             self.status_dot.itemconfig(self.dot_id, fill="#2ECC71")
             self.status_label.config(text="就绪")
+            self.subtitle.hide()
         else:
             self.status_dot.itemconfig(self.dot_id, fill="#E74C3C")
             self.status_label.config(text=str(status))
@@ -211,6 +220,7 @@ class VoiceInputApp:
     def _minimize_to_tray(self):
         self.root.withdraw()
         self.floating.hide()
+        self.subtitle.hide()
         if not self.tray:
             menu = pystray.Menu(
                 pystray.MenuItem("显示设置", self._show_window),
@@ -227,6 +237,7 @@ class VoiceInputApp:
     def _on_close(self):
         self.root.withdraw()
         self.floating.hide()
+        self.subtitle.hide()
 
     def _quit(self):
         self.engine.stop_continuous()
@@ -235,6 +246,7 @@ class VoiceInputApp:
         if self.tray:
             self.tray.stop()
         self.floating.destroy()
+        self.subtitle.destroy()
         self.root.destroy()
 
     def run(self):
