@@ -23,26 +23,32 @@
 - Python 3.10+（开发者）
 - 本地部署的 [FunASR](https://github.com/alibaba-damo-academy/FunASR) WebSocket 服务
 
-### 部署 FunASR 服务（Docker）
+### 部署 FunASR 服务
 
-拉取镜像并启动容器（CPU 版本，无需 GPU）：
+**方式一：一键脚本（推荐）**
 
 ```bash
-docker pull \
-  registry.cn-hangzhou.aliyuncs.com/funasr_repo/funasr:funasr-runtime-sdk-online-cpu-0.1.13
-
-mkdir -p ./funasr-runtime-resources/models
-
-docker run -p 10096:10095 -it --privileged=true \
-  -v $PWD/funasr-runtime-resources/models:/workspace/models \
-  registry.cn-hangzhou.aliyuncs.com/funasr_repo/funasr:funasr-runtime-sdk-online-cpu-0.1.13
+chmod +x start-funasr.sh
+./start-funasr.sh
 ```
 
-进入容器后，启动 2pass 实时听写服务：
+脚本会自动安装 Docker、拉取镜像、启动服务。首次运行会下载模型（约 1.5GB），之后直接启动。
+
+**方式二：Docker Compose**
 
 ```bash
-cd FunASR/runtime
-nohup bash run_server_2pass.sh \
+docker-compose up -d
+```
+
+**方式三：手动 Docker**
+
+```bash
+docker pull registry.cn-hangzhou.aliyuncs.com/funasr_repo/funasr:funasr-runtime-sdk-online-cpu-0.1.13
+mkdir -p ./funasr-models
+docker run -d --name funasr -p 10096:10095 --privileged=true \
+  -v $PWD/funasr-models:/workspace/models \
+  registry.cn-hangzhou.aliyuncs.com/funasr_repo/funasr:funasr-runtime-sdk-online-cpu-0.1.13 \
+  /bin/bash -c "cd FunASR/runtime && bash run_server_2pass.sh \
   --download-model-dir /workspace/models \
   --vad-dir damo/speech_fsmn_vad_zh-cn-16k-common-onnx \
   --model-dir damo/speech_paraformer-large-vad-punc_asr_nat-zh-cn-16k-common-vocab8404-onnx \
@@ -50,12 +56,11 @@ nohup bash run_server_2pass.sh \
   --punc-dir damo/punc_ct-transformer_zh-cn-common-vad_realtime-vocab272727-onnx \
   --lm-dir damo/speech_ngram_lm_zh-cn-ai-wesp-fst \
   --itn-dir thuduj12/fst_itn_zh \
-  --certfile 0 > log.txt 2>&1 &
+  --certfile 0"
 ```
 
-> `--certfile 0` 表示关闭 SSL，客户端使用 `ws://` 而非 `wss://`。
-> 首次启动会自动从 ModelScope 下载模型，需要联网，之后缓存在 `/workspace/models`。
-> 详细参数说明参考 [FunASR 实时语音听写部署文档](https://github.com/modelscope/FunASR/blob/main/runtime/docs/SDK_advanced_guide_online_zh.md)。
+> 服务地址: `ws://localhost:10096`，关闭 SSL（`--certfile 0`）。
+> 详细参数参考 [FunASR 部署文档](https://github.com/modelscope/FunASR/blob/main/runtime/docs/SDK_advanced_guide_online_zh.md)。
 
 ### 安装 & 运行
 
