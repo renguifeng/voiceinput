@@ -1,7 +1,6 @@
 import asyncio
-import ctypes
-import ctypes.wintypes as wintypes
 import json
+import sys
 import threading
 import time
 
@@ -11,49 +10,7 @@ import websockets
 from pynput import keyboard
 
 from constants import SAMPLE_RATE, SEND_INTERVAL
-
-# ── Win32 APIs ──────────────────────────────────────────
-_user32 = ctypes.windll.user32
-_kernel32 = ctypes.windll.kernel32
-
-# Clipboard
-_kernel32.GlobalAlloc.restype = ctypes.c_void_p
-_kernel32.GlobalAlloc.argtypes = [ctypes.c_uint, ctypes.c_size_t]
-_kernel32.GlobalLock.restype = ctypes.c_void_p
-_kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
-_kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
-_user32.OpenClipboard.restype = ctypes.c_int
-_user32.OpenClipboard.argtypes = [ctypes.c_void_p]
-_user32.SetClipboardData.restype = ctypes.c_void_p
-_user32.SetClipboardData.argtypes = [ctypes.c_uint, ctypes.c_void_p]
-_user32.GetClipboardData.restype = ctypes.c_void_p
-_user32.GetClipboardData.argtypes = [ctypes.c_uint]
-
-# SendInput for direct Unicode character input (no clipboard)
-_INPUT_KB = 1
-_FLAG_UNICODE = 0x0004
-_FLAG_KEYUP = 0x0002
-
-
-class _KI(ctypes.Structure):
-    _fields_ = [("wVk", ctypes.c_ushort), ("wScan", ctypes.c_ushort),
-                ("dwFlags", ctypes.c_ulong), ("time", ctypes.c_ulong),
-                ("dwExtraInfo", ctypes.c_void_p)]
-
-
-class _INPUT(ctypes.Structure):
-    class _U(ctypes.Union):
-        _fields_ = [("ki", _KI)]
-    _anonymous_ = ["_u"]
-    _fields_ = [("type", ctypes.c_ulong), ("_u", _U)]
-
-
-def _send_unicode(ch):
-    """Send a single Unicode character directly to the focused window."""
-    code = ord(ch)
-    down = _INPUT(type=_INPUT_KB, ki=_KI(0, code, _FLAG_UNICODE, 0, None))
-    up = _INPUT(type=_INPUT_KB, ki=_KI(0, code, _FLAG_UNICODE | _FLAG_KEYUP, 0, None))
-    _user32.SendInput(2, ctypes.byref((_INPUT * 2)(down, up)), ctypes.sizeof(_INPUT))
+from platform_utils import set_clipboard, get_clipboard
 
 
 class VoiceInputEngine:
@@ -74,51 +31,17 @@ class VoiceInputEngine:
             with self.lock:
                 self.audio_buffer.append(indata[:, 0].copy())
 
-    @staticmethod
-    def _set_clipboard(text):
-        CF_UNICODETEXT = 13
-        GMEM_MOVEABLE = 0x0002
-
-        data = text.encode("utf-16-le") + b"\x00\x00"
-        h = _kernel32.GlobalAlloc(GMEM_MOVEABLE, len(data))
-        p = _kernel32.GlobalLock(h)
-        ctypes.memmove(p, data, len(data))
-        _kernel32.GlobalUnlock(h)
-
-        _user32.OpenClipboard(0)
-        _user32.EmptyClipboard()
-        _user32.SetClipboardData(CF_UNICODETEXT, h)
-        _user32.CloseClipboard()
-
-    @staticmethod
-    def _get_clipboard():
-        """Read current clipboard text via Win32 API."""
-        CF_UNICODETEXT = 13
-        try:
-            if not _user32.OpenClipboard(0):
-                return ""
-            handle = _user32.GetClipboardData(CF_UNICODETEXT)
-            if not handle:
-                return ""
-            ptr = _kernel32.GlobalLock(handle)
-            if not ptr:
-                return ""
-            try:
-                return ctypes.wstring_at(ptr)
-            finally:
-                _kernel32.GlobalUnlock(handle)
-        finally:
-            _user32.CloseClipboard()
-
     def _paste_text(self, text):
-        """Paste text via clipboard — used only for final results."""
+        """Paste text via clipboard + hotkey."""
         if not text:
             return
-        self._set_clipboard(text)
-        self._kb.press(keyboard.Key.ctrl)
+        set_clipboard(text)
+        # macOS uses Cmd+V, Windows/Linux use Ctrl+V
+        mod_key = keyboard.Key.cmd if sys.platform == 'darwin' else keyboard.Key.ctrl
+        self._kb.press(mod_key)
         self._kb.press("v")
         self._kb.release("v")
-        self._kb.release(keyboard.Key.ctrl)
+        self._kb.release(mod_key)
         time.sleep(self._paste_delay)
 
     # ── Continuous mode: real-time streaming ──────────────
@@ -154,7 +77,7 @@ class VoiceInputEngine:
 
     async def _continuous_run(self):
         # Save clipboard before we start modifying it
-        saved = self._get_clipboard()
+        saved = get_clipboard()
         try:
             async with websockets.connect(self.server_url) as ws:
                 await ws.send(json.dumps({
@@ -170,7 +93,7 @@ class VoiceInputEngine:
         finally:
             # Restore clipboard after session ends
             if saved is not None:
-                self._set_clipboard(saved)
+                set_clipboard(saved)
 
     def start_continuous(self):
         if self.recording:
