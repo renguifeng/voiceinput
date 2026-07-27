@@ -1,0 +1,7 @@
+websockets
+sounddevice
+numpy
+pynput
+pystray
+Pillow
+pyinstaller
