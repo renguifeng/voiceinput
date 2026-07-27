@@ -23,17 +23,39 @@
 - Python 3.10+（开发者）
 - 本地部署的 [FunASR](https://github.com/alibaba-damo-academy/FunASR) WebSocket 服务
 
-### 部署 FunASR 服务（Docker 一键启动）
+### 部署 FunASR 服务（Docker）
+
+拉取镜像并启动容器（CPU 版本，无需 GPU）：
 
 ```bash
-docker run -d --name funasr \
-  -p 10096:10096 \
-  --gpus all \
-  registry.cn-hangzhou.aliyuncs.com/funasr/funasr:runtime-sdk-online-latest \
-  /bin/bash -c "cd FunASR/runtime && nohup bash run_server.sh > log.txt 2>&1"
+docker pull \
+  registry.cn-hangzhou.aliyuncs.com/funasr_repo/funasr:funasr-runtime-sdk-online-cpu-0.1.13
+
+mkdir -p ./funasr-runtime-resources/models
+
+docker run -p 10096:10095 -it --privileged=true \
+  -v $PWD/funasr-runtime-resources/models:/workspace/models \
+  registry.cn-hangzhou.aliyuncs.com/funasr_repo/funasr:funasr-runtime-sdk-online-cpu-0.1.13
 ```
 
-没有 GPU？去掉 `--gpus all`，CPU 也能跑（稍慢）。
+进入容器后，启动 2pass 实时听写服务：
+
+```bash
+cd FunASR/runtime
+nohup bash run_server_2pass.sh \
+  --download-model-dir /workspace/models \
+  --vad-dir damo/speech_fsmn_vad_zh-cn-16k-common-onnx \
+  --model-dir damo/speech_paraformer-large-vad-punc_asr_nat-zh-cn-16k-common-vocab8404-onnx \
+  --online-model-dir damo/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-online-onnx \
+  --punc-dir damo/punc_ct-transformer_zh-cn-common-vad_realtime-vocab272727-onnx \
+  --lm-dir damo/speech_ngram_lm_zh-cn-ai-wesp-fst \
+  --itn-dir thuduj12/fst_itn_zh \
+  --certfile 0 > log.txt 2>&1 &
+```
+
+> `--certfile 0` 表示关闭 SSL，客户端使用 `ws://` 而非 `wss://`。
+> 首次启动会自动从 ModelScope 下载模型，需要联网，之后缓存在 `/workspace/models`。
+> 详细参数说明参考 [FunASR 实时语音听写部署文档](https://github.com/modelscope/FunASR/blob/main/runtime/docs/SDK_advanced_guide_online_zh.md)。
 
 ### 安装 & 运行
 
@@ -94,6 +116,11 @@ voiceinput/
 └── requirements.txt
 ```
 
+## 🔗 镜像仓库
+
+- **GitHub**: https://github.com/renguifeng/voiceinput
+- **Gitee**: https://gitee.com/renguifeng/voiceinput（国内访问更快）
+
 ## 🛠️ 技术栈
 
 - [FunASR](https://github.com/alibaba-damo-academy/FunASR) — 阿里达摩院开源语音识别
@@ -123,6 +150,20 @@ voiceinput/
 
 - GitHub ⭐ Star 一下
 - 分享给需要的朋友
+
+## ❓ FAQ
+
+**Q：必须要 GPU 吗？**
+不需要。CPU 版本即可运行，实时识别延迟略高但完全可用。
+
+**Q：支持 macOS / Linux 吗？**
+目前仅支持 Windows（依赖 Win32 剪贴板和 SendInput API）。后续计划适配。
+
+**Q：识别准确率怎么样？**
+基于 Paraformer-Large 模型，中文识别准确率与主流商业输入法相当，自带标点断句。
+
+**Q：数据会被上传到云端吗？**
+不会。音频在本地处理，通过 WebSocket 发送到你自己的 FunASR 服务，全程不出局域网。
 
 ---
 
