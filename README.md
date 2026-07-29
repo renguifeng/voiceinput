@@ -122,8 +122,6 @@ voiceinput/
 如果这个工具对你有帮助：
 
 - GitHub ⭐ Star 一下
-- [爱发电](https://afdian.net) 搜索「任桂峰」
-- 分享给需要的朋友
 
 ---
 
